@@ -1,0 +1,575 @@
+{
+  "name": "RentaCar CRM - Leer, clasificar, cotizar y responder",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+        "simple": false,
+        "filters": { "q": "in:inbox is:unread" }
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000001",
+      "name": "Nuevo correo",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "credentials": { "gmailOAuth2": { "id": "", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.item.json;\nconst headers = msg.payload?.headers || [];\nconst getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';\n\nconst fromHeader = getHeader('From');\nconst subject = getHeader('Subject');\nconst snippet = msg.snippet || '';\n\nconst emailMatch = fromHeader.match(/<([^>]+)>/);\nconst clienteEmail = emailMatch ? emailMatch[1] : fromHeader.trim();\nconst clienteNombreHeader = fromHeader.replace(/<[^>]+>/, '').replace(/\"/g, '').trim() || clienteEmail;\n\nconst hoy = new Date();\nconst fechaInicioDefault = new Date(hoy.getTime() + 7 * 86400000).toISOString().slice(0, 10);\nconst fechaFinDefault = new Date(hoy.getTime() + 10 * 86400000).toISOString().slice(0, 10);\n\nreturn [{\n  json: {\n    gmailMessageId: msg.id,\n    gmailThreadId: msg.threadId,\n    remitente: fromHeader,\n    clienteEmail,\n    clienteNombreHeader,\n    asunto: subject,\n    resumen: snippet,\n    recibidoAt: new Date(Number(msg.internalDate || Date.now())).toISOString(),\n    hoy: hoy.toISOString().slice(0, 10),\n    fechaInicioDefault,\n    fechaFinDefault,\n  }\n}];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000002",
+      "name": "Extraer datos del correo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 300,\n  \"system\": \"Eres un asistente que analiza correos entrantes de un negocio de renta de carros (Rent a Car). Clasifica el correo en EXACTAMENTE una de estas categorías: venta, soporte, cobro, cotizacion, confirmacion, cancelacion.\\n- 'cotizacion': el cliente pide explícitamente precio, tarifa o disponibilidad para fechas o un tipo de vehículo.\\n- 'confirmacion': el cliente acepta o confirma expresamente una cotización o reserva ya enviada (dice sí, confirmo, acepto, reservo, procedo, etc.).\\n- 'cancelacion': el cliente cancela o rechaza una reserva o cotización (dice no, cancelo, ya no quiero, cancela mi reserva, etc.).\\n- 'venta': consultas generales de venta o interés en alquilar sin pedir precio específico.\\n- 'soporte': problemas, incidencias o asistencia con un alquiler en curso.\\n- 'cobro': solicitudes de factura, recibo o información de pago.\\nSi la categoría es 'cotizacion', además extrae: categoriaVehiculo (uno de: economico, sedan, suv, pickup, van, lujo; si no se menciona usa 'sedan'), y si el correo da fechas claras, fechaInicio y fechaFin en formato YYYY-MM-DD. Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni backticks, con este formato exacto: {\\\"categoria\\\":\\\"venta|soporte|cobro|cotizacion|confirmacion|cancelacion\\\",\\\"categoriaVehiculo\\\":\\\"...\\\"|null,\\\"fechaInicio\\\":\\\"YYYY-MM-DD\\\"|null,\\\"fechaFin\\\":\\\"YYYY-MM-DD\\\"|null,\\\"clienteNombre\\\":\\\"...\\\"}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Remitente: {{ $json.remitente }}\\nAsunto: {{ $json.asunto }}\\nContenido: {{ $json.resumen }}\\nFecha de hoy: {{ $json.hoy }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000003",
+      "name": "Clasificar con Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Anthropic API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previo = $('Extraer datos del correo').item.json;\nconst respuesta = $input.item.json;\nlet texto = respuesta.content?.[0]?.text?.trim() || '{}';\ntexto = texto.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```\\s*$/i, '').trim();\n\nlet parsed = {};\ntry { parsed = JSON.parse(texto); } catch (e) { parsed = {}; }\n\nconst CATEGORIAS_VALIDAS = ['venta', 'soporte', 'cobro', 'cotizacion', 'confirmacion', 'cancelacion'];\nconst categoria = CATEGORIAS_VALIDAS.includes(parsed.categoria) ? parsed.categoria : 'venta';\nconst categoriaVehiculo = parsed.categoriaVehiculo || 'sedan';\nconst fechaInicio = parsed.fechaInicio || previo.fechaInicioDefault;\nconst fechaFin = parsed.fechaFin || previo.fechaFinDefault;\nconst clienteNombre = parsed.clienteNombre || previo.clienteNombreHeader;\n\nreturn [{\n  json: {\n    ...previo,\n    categoria,\n    categoriaVehiculo,\n    fechaInicio,\n    fechaFin,\n    clienteNombre,\n  }\n}];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000004",
+      "name": "Parsear clasificación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/config",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000005",
+      "name": "Consultar configuración",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const clasificado = $('Parsear clasificación').item.json;\nconst config = $input.item.json;\nconst debeResponder = !!config[clasificado.categoria];\nreturn [{ json: { ...clasificado, debeResponder } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000006",
+      "name": "Combinar config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.debeResponder }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000007",
+      "name": "¿Auto-responder activado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nreturn [{ json: { ...data, respuestaIA: '', respondido: false } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000008",
+      "name": "Marcar sin respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"gmailMessageId\": \"{{ $json.gmailMessageId }}\",\n  \"gmailThreadId\": \"{{ $json.gmailThreadId }}\",\n  \"clienteEmail\": \"{{ $json.clienteEmail }}\",\n  \"clienteNombre\": \"{{ $json.clienteNombre }}\",\n  \"remitente\": \"{{ $json.remitente }}\",\n  \"asunto\": \"{{ $json.asunto }}\",\n  \"resumen\": \"{{ $json.resumen }}\",\n  \"categoria\": \"{{ $json.categoria }}\",\n  \"respuestaIA\": \"{{ $json.respuestaIA }}\",\n  \"respondido\": {{ $json.respondido }},\n  \"recibidoAt\": \"{{ $json.recibidoAt }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000009",
+      "name": "Guardar sin respuesta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2160, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.categoria }}",
+              "rightValue": "cotizacion",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000a",
+      "name": "¿Es cotización?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1920, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 350,\n  \"system\": \"Eres un asistente de un negocio de renta de carros (Rent a Car) que responde correos de clientes en español. Adapta el tono según la categoría: venta (cordial, ofrece ayudar a coordinar el alquiler y pregunta fechas si faltan), soporte (empático y claro, sin prometer soluciones que no puedes garantizar por correo), cobro (formal y conciso, nunca pidas ni confirmes datos completos de tarjeta). Responde ÚNICAMENTE con el cuerpo del correo de respuesta, sin asunto ni firma.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Categoría: {{ $json.categoria }}\\nRemitente: {{ $json.remitente }}\\nAsunto: {{ $json.asunto }}\\nContenido: {{ $json.resumen }}\\n\\nRedacta la respuesta.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000b",
+      "name": "Redactar respuesta (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 300],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Anthropic API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previo = $('Combinar config').item.json;\nconst respuesta = $input.item.json;\nconst texto = respuesta.content?.[0]?.text?.trim() || '';\nreturn [{ json: { ...previo, respuestaIA: texto, respondido: true } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000c",
+      "name": "Extraer respuesta IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $json.gmailMessageId }}",
+        "message": "={{ $json.respuestaIA }}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000d",
+      "name": "Responder correo",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2880, 300],
+      "credentials": { "gmailOAuth2": { "id": "", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Extraer respuesta IA').item.json } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000e",
+      "name": "Preparar registro respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"gmailMessageId\": \"{{ $json.gmailMessageId }}\",\n  \"gmailThreadId\": \"{{ $json.gmailThreadId }}\",\n  \"clienteEmail\": \"{{ $json.clienteEmail }}\",\n  \"clienteNombre\": \"{{ $json.clienteNombre }}\",\n  \"remitente\": \"{{ $json.remitente }}\",\n  \"asunto\": \"{{ $json.asunto }}\",\n  \"resumen\": \"{{ $json.resumen }}\",\n  \"categoria\": \"{{ $json.categoria }}\",\n  \"respuestaIA\": \"{{ $json.respuestaIA }}\",\n  \"respondido\": {{ $json.respondido }},\n  \"recibidoAt\": \"{{ $json.recibidoAt }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000000f",
+      "name": "Guardar respuesta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3360, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/cotizar",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"clienteNombre\": \"{{ $json.clienteNombre }}\",\n  \"clienteEmail\": \"{{ $json.clienteEmail }}\",\n  \"categoriaVehiculo\": \"{{ $json.categoriaVehiculo }}\",\n  \"fechaInicio\": \"{{ $json.fechaInicio }}\",\n  \"fechaFin\": \"{{ $json.fechaFin }}\",\n  \"origen\": \"{{ $json.remitente }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000010",
+      "name": "Generar cotización",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2160, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const clasificado = $('Combinar config').item.json;\nconst cot = $input.item.json;\n\nreturn [{\n  json: {\n    ...clasificado,\n    clienteId: cot.clienteId,\n    cotizacionId: cot.cotizacionId,\n    vehiculoMarca: cot.vehiculo.marca,\n    vehiculoModelo: cot.vehiculo.modelo,\n    fechaInicio: cot.fechaInicio,\n    fechaFin: cot.fechaFin,\n    dias: cot.dias,\n    total: cot.total,\n    pdfBase64: cot.pdfBase64,\n  }\n}];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000011",
+      "name": "Combinar datos cotización",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 300,\n  \"system\": \"Eres un asistente de un negocio de renta de carros. Redacta un correo breve y profesional en español confirmando que se adjunta en PDF la cotización solicitada. Menciona el vehículo, el periodo de alquiler y el total de forma natural. Indica que la cotización tiene una vigencia de 7 días. Responde ÚNICAMENTE con el cuerpo del correo, sin asunto ni firma.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Cliente: {{ $json.clienteNombre }}\\nVehículo: {{ $json.vehiculoMarca }} {{ $json.vehiculoModelo }}\\nPeriodo: {{ $json.fechaInicio }} a {{ $json.fechaFin }} ({{ $json.dias }} días)\\nTotal: ₡{{ $json.total }}\\n\\nRedacta el correo.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000012",
+      "name": "Redactar correo de cotización (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2640, 100],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Anthropic API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previo = $('Combinar datos cotización').item.json;\nconst respuesta = $input.item.json;\nconst texto = respuesta.content?.[0]?.text?.trim() || 'Adjunto encontrarás la cotización solicitada. Quedo atento a cualquier duda.';\nreturn [{ json: { ...previo, respuestaIA: texto, respondido: true } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000013",
+      "name": "Extraer texto cotización",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 100]
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "pdfBase64",
+        "options": { "fileName": "cotizacion.pdf", "mimeType": "application/pdf" }
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000014",
+      "name": "Convertir PDF a archivo",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [3120, 100]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $json.gmailMessageId }}",
+        "message": "={{ $json.respuestaIA }}",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [{ "property": "data" }]
+          }
+        }
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000015",
+      "name": "Responder con cotización",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [3360, 100],
+      "credentials": { "gmailOAuth2": { "id": "", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Convertir PDF a archivo').item.json } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000016",
+      "name": "Preparar registro cotización",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"gmailMessageId\": \"{{ $json.gmailMessageId }}\",\n  \"gmailThreadId\": \"{{ $json.gmailThreadId }}\",\n  \"clienteId\": {{ $json.clienteId }},\n  \"remitente\": \"{{ $json.remitente }}\",\n  \"asunto\": \"{{ $json.asunto }}\",\n  \"resumen\": \"{{ $json.resumen }}\",\n  \"categoria\": \"{{ $json.categoria }}\",\n  \"cotizacionId\": {{ $json.cotizacionId }},\n  \"respuestaIA\": \"{{ $json.respuestaIA }}\",\n  \"respondido\": {{ $json.respondido }},\n  \"recibidoAt\": \"{{ $json.recibidoAt }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000017",
+      "name": "Guardar cotización",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3840, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/seguimientos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"clienteId\": {{ $json.clienteId }},\n  \"cotizacionId\": {{ $json.cotizacionId }},\n  \"tipo\": \"seguimiento_cotizacion\",\n  \"mensaje\": \"¿Pudiste revisar la cotización que te enviamos? Quedo atento por si tienes alguna duda.\",\n  \"programadoPara\": \"{{ $now.plus({ days: 3 }).toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000018",
+      "name": "Programar seguimiento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3840, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.categoria }}",
+              "rightValue": "confirmacion",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "cond2",
+              "leftValue": "={{ $json.categoria }}",
+              "rightValue": "cancelacion",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001a",
+      "name": "¿Es confirmación/cancelación?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2160, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/confirmar",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tipo\": \"{{ $json.categoria }}\",\n  \"clienteEmail\": \"{{ $json.clienteEmail }}\",\n  \"clienteNombre\": \"{{ $json.clienteNombre }}\",\n  \"gmailMessageId\": \"{{ $json.gmailMessageId }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001b",
+      "name": "Registrar en CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const previo = $('Combinar config').item.json;\nconst crm = $input.item.json;\nreturn [{ json: {\n  ...previo,\n  tipo: crm.tipo,\n  clienteId: crm.clienteId,\n  clienteNombre: crm.clienteNombre || previo.clienteNombre,\n  cotizacionId: crm.cotizacionId,\n  vehiculoMarca: crm.vehiculoMarca,\n  vehiculoModelo: crm.vehiculoModelo,\n  fechaInicio: crm.fechaInicio,\n  fechaFin: crm.fechaFin,\n  total: crm.total,\n  dias: crm.dias,\n} }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001c",
+      "name": "Combinar datos confirmación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 300,\n  \"system\": \"Eres un asistente de un negocio de renta de carros. Si el tipo es 'confirmacion', redacta un correo cordial confirmando la reserva del vehículo indicado para las fechas indicadas, agradece al cliente, e indica que el equipo lo contactará pronto para coordinar el pago y la entrega del vehículo. Si el tipo es 'cancelacion', redacta un correo amable confirmando la cancelación de la reserva, expresa que queda disponible para cualquier futura necesidad. Responde ÚNICAMENTE con el cuerpo del correo, sin asunto ni firma.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tipo: {{ $json.tipo }}\\nCliente: {{ $json.clienteNombre }}\\nVehículo: {{ $json.vehiculoMarca }} {{ $json.vehiculoModelo }}\\nPeriodo: {{ $json.fechaInicio }} al {{ $json.fechaFin }} ({{ $json.dias }} días)\\nTotal: ₡{{ $json.total }}\\n\\nRedacta el correo de respuesta.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001d",
+      "name": "Redactar respuesta confirmación (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2880, 460],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Anthropic API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previo = $('Combinar datos confirmación').item.json;\nconst respuesta = $input.item.json;\nconst texto = respuesta.content?.[0]?.text?.trim() || '';\nreturn [{ json: { ...previo, respuestaIA: texto, respondido: true } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001e",
+      "name": "Extraer texto confirmación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 460]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $json.gmailMessageId }}",
+        "message": "={{ $json.respuestaIA }}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-00000000001f",
+      "name": "Responder correo confirmación",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [3360, 460],
+      "credentials": { "gmailOAuth2": { "id": "", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Extraer texto confirmación').item.json } }];"
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000020",
+      "name": "Preparar registro confirmación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rentacar-crm.vercel.app/api/webhooks/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-ingest-secret", "value": "523c0b36e3ba4e19c7dbf73de8aab80fcdb5bcbb48422977" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"gmailMessageId\": \"{{ $json.gmailMessageId }}\",\n  \"gmailThreadId\": \"{{ $json.gmailThreadId }}\",\n  \"clienteId\": {{ $json.clienteId }},\n  \"remitente\": \"{{ $json.remitente }}\",\n  \"asunto\": \"{{ $json.asunto }}\",\n  \"resumen\": \"{{ $json.resumen }}\",\n  \"categoria\": \"{{ $json.categoria }}\",\n  \"cotizacionId\": {{ $json.cotizacionId }},\n  \"respuestaIA\": \"{{ $json.respuestaIA }}\",\n  \"respondido\": {{ $json.respondido }},\n  \"recibidoAt\": \"{{ $json.recibidoAt }}\"\n}",
+        "options": {}
+      },
+      "id": "r1a2b3c4-0001-0001-0001-000000000021",
+      "name": "Guardar confirmación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3840, 460]
+    }
+  ],
+  "connections": {
+    "Nuevo correo": { "main": [[{ "node": "Extraer datos del correo", "type": "main", "index": 0 }]] },
+    "Extraer datos del correo": { "main": [[{ "node": "Clasificar con Claude", "type": "main", "index": 0 }]] },
+    "Clasificar con Claude": { "main": [[{ "node": "Parsear clasificación", "type": "main", "index": 0 }]] },
+    "Parsear clasificación": { "main": [[{ "node": "Consultar configuración", "type": "main", "index": 0 }]] },
+    "Consultar configuración": { "main": [[{ "node": "Combinar config", "type": "main", "index": 0 }]] },
+    "Combinar config": { "main": [[{ "node": "¿Auto-responder activado?", "type": "main", "index": 0 }]] },
+    "¿Auto-responder activado?": {
+      "main": [
+        [{ "node": "¿Es cotización?", "type": "main", "index": 0 }],
+        [{ "node": "Marcar sin respuesta", "type": "main", "index": 0 }]
+      ]
+    },
+    "Marcar sin respuesta": { "main": [[{ "node": "Guardar sin respuesta", "type": "main", "index": 0 }]] },
+    "¿Es cotización?": {
+      "main": [
+        [{ "node": "Generar cotización", "type": "main", "index": 0 }],
+        [{ "node": "¿Es confirmación/cancelación?", "type": "main", "index": 0 }]
+      ]
+    },
+    "¿Es confirmación/cancelación?": {
+      "main": [
+        [{ "node": "Registrar en CRM", "type": "main", "index": 0 }],
+        [{ "node": "Redactar respuesta (Claude)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar en CRM": { "main": [[{ "node": "Combinar datos confirmación", "type": "main", "index": 0 }]] },
+    "Combinar datos confirmación": { "main": [[{ "node": "Redactar respuesta confirmación (Claude)", "type": "main", "index": 0 }]] },
+    "Redactar respuesta confirmación (Claude)": { "main": [[{ "node": "Extraer texto confirmación", "type": "main", "index": 0 }]] },
+    "Extraer texto confirmación": { "main": [[{ "node": "Responder correo confirmación", "type": "main", "index": 0 }]] },
+    "Responder correo confirmación": { "main": [[{ "node": "Preparar registro confirmación", "type": "main", "index": 0 }]] },
+    "Preparar registro confirmación": { "main": [[{ "node": "Guardar confirmación", "type": "main", "index": 0 }]] },
+    "Redactar respuesta (Claude)": { "main": [[{ "node": "Extraer respuesta IA", "type": "main", "index": 0 }]] },
+    "Extraer respuesta IA": { "main": [[{ "node": "Responder correo", "type": "main", "index": 0 }]] },
+    "Responder correo": { "main": [[{ "node": "Preparar registro respuesta", "type": "main", "index": 0 }]] },
+    "Preparar registro respuesta": { "main": [[{ "node": "Guardar respuesta", "type": "main", "index": 0 }]] },
+    "Generar cotización": { "main": [[{ "node": "Combinar datos cotización", "type": "main", "index": 0 }]] },
+    "Combinar datos cotización": { "main": [[{ "node": "Redactar correo de cotización (Claude)", "type": "main", "index": 0 }]] },
+    "Redactar correo de cotización (Claude)": { "main": [[{ "node": "Extraer texto cotización", "type": "main", "index": 0 }]] },
+    "Extraer texto cotización": { "main": [[{ "node": "Convertir PDF a archivo", "type": "main", "index": 0 }]] },
+    "Convertir PDF a archivo": { "main": [[{ "node": "Responder con cotización", "type": "main", "index": 0 }]] },
+    "Responder con cotización": { "main": [[{ "node": "Preparar registro cotización", "type": "main", "index": 0 }]] },
+    "Preparar registro cotización": {
+      "main": [
+        [
+          { "node": "Guardar cotización", "type": "main", "index": 0 },
+          { "node": "Programar seguimiento", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
