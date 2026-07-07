@@ -26,9 +26,9 @@ async function llamarClaude(system: string, userContent: string, maxTokens = 350
 
 export interface ClasificacionCorreo {
   categoria: 'venta' | 'soporte' | 'cobro' | 'cotizacion'
-  categoriaVehiculo: string
-  fechaInicio: string
-  fechaFin: string
+  categoriaVehiculo: string | null
+  fechaInicio: string | null
+  fechaFin: string | null
   clienteNombre: string
 }
 
@@ -39,10 +39,8 @@ export async function clasificarCorreo(input: {
   clienteNombreHeader: string
 }): Promise<ClasificacionCorreo> {
   const hoy = new Date()
-  const fechaInicioDefault = new Date(hoy.getTime() + 7 * 86400000).toISOString().slice(0, 10)
-  const fechaFinDefault = new Date(hoy.getTime() + 10 * 86400000).toISOString().slice(0, 10)
 
-  const system = `Eres un asistente que analiza correos entrantes de un negocio de renta de carros (Rent a Car). Clasifica el correo en EXACTAMENTE una de estas categorías: venta, soporte, cobro, cotizacion. Usa 'cotizacion' solo cuando el cliente pida explícitamente precio, tarifa o disponibilidad para fechas o un tipo de vehículo. Si la categoría es 'cotizacion', además extrae: categoriaVehiculo (uno de: economico, sedan, suv, pickup, van, lujo, el que mejor calce con lo que pide el cliente; si no se menciona usa 'sedan'), y si el correo da fechas claras, fechaInicio y fechaFin en formato YYYY-MM-DD. Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni backticks, con este formato exacto: {"categoria":"venta|soporte|cobro|cotizacion","categoriaVehiculo":"..."|null,"fechaInicio":"YYYY-MM-DD"|null,"fechaFin":"YYYY-MM-DD"|null,"clienteNombre":"..."}`
+  const system = `Eres un asistente que analiza correos entrantes de un negocio de renta de carros (Rent a Car). Clasifica el correo en EXACTAMENTE una de estas categorías: venta, soporte, cobro, cotizacion. Usa 'cotizacion' cuando el cliente pregunte por precio, tarifa, disponibilidad de vehículos o quiera rentar un carro, sin importar si dio fechas concretas o no. Si la categoría es 'cotizacion', además extrae: categoriaVehiculo (uno de: economico, sedan, suv, pickup, van, lujo, el que mejor calce con lo que pide el cliente; usa null si no menciona ningún tipo de vehículo en particular), y fechaInicio/fechaFin en formato YYYY-MM-DD ÚNICAMENTE si el correo las indica explícitamente (usa null en caso contrario, NUNCA inventes ni asumas fechas). Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni backticks, con este formato exacto: {"categoria":"venta|soporte|cobro|cotizacion","categoriaVehiculo":"..."|null,"fechaInicio":"YYYY-MM-DD"|null,"fechaFin":"YYYY-MM-DD"|null,"clienteNombre":"..."}`
 
   const userContent = `Remitente: ${input.remitente}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\nFecha de hoy: ${hoy.toISOString().slice(0, 10)}`
 
@@ -56,9 +54,9 @@ export async function clasificarCorreo(input: {
 
   return {
     categoria,
-    categoriaVehiculo: parsed.categoriaVehiculo || 'sedan',
-    fechaInicio: parsed.fechaInicio || fechaInicioDefault,
-    fechaFin: parsed.fechaFin || fechaFinDefault,
+    categoriaVehiculo: parsed.categoriaVehiculo || null,
+    fechaInicio: parsed.fechaInicio || null,
+    fechaFin: parsed.fechaFin || null,
     clienteNombre: parsed.clienteNombre || input.clienteNombreHeader,
   }
 }
@@ -68,6 +66,23 @@ export async function redactarRespuesta(input: { categoria: string; remitente: s
   const userContent = `Categoría: ${input.categoria}\nRemitente: ${input.remitente}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\n\nRedacta la respuesta.`
   const texto = await llamarClaude(system, userContent, 350)
   return texto || 'Gracias por tu correo, en breve te contactamos con más detalles.'
+}
+
+export async function redactarRespuestaDisponibilidad(input: {
+  clienteNombre: string
+  remitente: string
+  asunto: string
+  resumen: string
+  vehiculos: { categoria: string; marca: string; modelo: string; tarifaDia: number }[]
+}) {
+  const listado = input.vehiculos
+    .map(v => `- ${v.marca} ${v.modelo} (${v.categoria}): ₡${v.tarifaDia}/día`)
+    .join('\n')
+
+  const system = `Eres un asistente de un negocio de renta de carros. El cliente preguntó por disponibilidad sin dar fechas concretas ni un vehículo específico. Redacta un correo breve y profesional en español que liste los vehículos disponibles que se te dan (con su tarifa por día) y le pida amablemente que indique las fechas y el tipo de vehículo que necesita para preparar una cotización formal. No inventes fechas, precios totales ni vehículos que no estén en la lista. Responde ÚNICAMENTE con el cuerpo del correo, sin asunto ni firma.`
+  const userContent = `Cliente: ${input.clienteNombre}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\n\nVehículos disponibles:\n${listado || '(sin vehículos disponibles actualmente)'}\n\nRedacta el correo.`
+  const texto = await llamarClaude(system, userContent, 350)
+  return texto || `Gracias por tu interés. Estos son los vehículos disponibles actualmente:\n\n${listado}\n\nCuéntanos las fechas y el tipo de vehículo que necesitas para enviarte una cotización formal.`
 }
 
 export async function redactarRespuestaCotizacion(input: {

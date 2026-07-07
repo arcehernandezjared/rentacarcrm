@@ -2,9 +2,10 @@ import pool from '@/lib/mysql'
 import {
   getAuthorizedClient, listUnreadMessages, getMessage, parseMessage, markAsRead, sendReply,
 } from '@/lib/gmail'
-import { clasificarCorreo, redactarRespuesta, redactarRespuestaCotizacion } from '@/lib/claude'
+import { clasificarCorreo, redactarRespuesta, redactarRespuestaCotizacion, redactarRespuestaDisponibilidad } from '@/lib/claude'
 import { obtenerConfigCategorias } from '@/lib/config'
 import { generarCotizacion, SinVehiculosDisponiblesError } from '@/lib/cotizaciones'
+import { listarVehiculosDisponibles } from '@/lib/vehiculos'
 import { registrarCorreo } from '@/lib/correos'
 import { programarSeguimiento } from '@/lib/seguimientos'
 
@@ -55,7 +56,41 @@ export async function POST() {
           recibidoAt: datos.recibidoAt,
         })
         sinResponder++
-      } else if (clasificacion.categoria === 'cotizacion') {
+      } else if (clasificacion.categoria === 'cotizacion' && (!clasificacion.fechaInicio || !clasificacion.fechaFin)) {
+        const vehiculos = await listarVehiculosDisponibles()
+
+        const texto = await redactarRespuestaDisponibilidad({
+          clienteNombre: clasificacion.clienteNombre,
+          remitente: datos.remitente,
+          asunto: datos.asunto,
+          resumen: datos.resumen,
+          vehiculos,
+        })
+
+        await sendReply(client, {
+          threadId: datos.gmailThreadId,
+          messageIdHeader: datos.messageIdHeader,
+          to: datos.clienteEmail,
+          subject: datos.asunto,
+          body: texto,
+        })
+
+        await registrarCorreo({
+          gmailMessageId: datos.gmailMessageId,
+          gmailThreadId: datos.gmailThreadId,
+          clienteEmail: datos.clienteEmail,
+          clienteNombre: clasificacion.clienteNombre,
+          remitente: datos.remitente,
+          asunto: datos.asunto,
+          resumen: datos.resumen,
+          categoria: 'cotizacion',
+          respuestaIA: texto,
+          respondido: true,
+          recibidoAt: datos.recibidoAt,
+        })
+
+        respondidos++
+      } else if (clasificacion.categoria === 'cotizacion' && clasificacion.fechaInicio && clasificacion.fechaFin) {
         const cot = await generarCotizacion({
           clienteNombre: clasificacion.clienteNombre,
           clienteEmail: datos.clienteEmail,
