@@ -2,10 +2,11 @@ import pool from '@/lib/mysql'
 import {
   getAuthorizedClient, listUnreadMessages, getMessage, parseMessage, markAsRead, sendReply,
 } from '@/lib/gmail'
-import { clasificarCorreo, redactarRespuesta, redactarRespuestaCotizacion, redactarRespuestaDisponibilidad } from '@/lib/claude'
+import { clasificarCorreo, redactarRespuesta, redactarRespuestaCotizacion, redactarRespuestaDisponibilidad, redactarRespuestaReserva } from '@/lib/claude'
 import { obtenerConfigCategorias } from '@/lib/config'
 import { generarCotizacion, SinVehiculosDisponiblesError } from '@/lib/cotizaciones'
 import { listarVehiculosDisponibles } from '@/lib/vehiculos'
+import { confirmarUltimaCotizacion, cancelarUltimaCotizacion } from '@/lib/reservas'
 import { registrarCorreo } from '@/lib/correos'
 import { programarSeguimiento } from '@/lib/seguimientos'
 
@@ -139,6 +140,53 @@ export async function POST() {
           cotizacionId: cot.cotizacionId,
           mensaje: '¿Pudiste revisar la cotización que te enviamos? Quedo atento por si tienes alguna duda.',
           programadoPara,
+        })
+
+        respondidos++
+      } else if (clasificacion.categoria === 'confirmacion' || clasificacion.categoria === 'cancelacion') {
+        const tipo = clasificacion.categoria === 'confirmacion' ? 'confirmada' : 'cancelada'
+        const cot = clasificacion.categoria === 'confirmacion'
+          ? await confirmarUltimaCotizacion(datos.clienteEmail)
+          : await cancelarUltimaCotizacion(datos.clienteEmail)
+
+        const texto = cot
+          ? await redactarRespuestaReserva({
+              clienteNombre: cot.clienteNombre,
+              tipo,
+              vehiculoMarca: cot.marca,
+              vehiculoModelo: cot.modelo,
+              fechaInicio: cot.fechaInicio,
+              fechaFin: cot.fechaFin,
+            })
+          : await redactarRespuesta({
+              categoria: 'soporte',
+              remitente: datos.remitente,
+              asunto: datos.asunto,
+              resumen: `El cliente quiere ${tipo === 'confirmada' ? 'confirmar' : 'cancelar'} una reserva, pero no encontramos ninguna cotización activa a su nombre. Pídele amablemente que aclare a qué cotización se refiere o que solicite una nueva.`,
+            })
+
+        await sendReply(client, {
+          threadId: datos.gmailThreadId,
+          messageIdHeader: datos.messageIdHeader,
+          to: datos.clienteEmail,
+          subject: datos.asunto,
+          body: texto,
+        })
+
+        await registrarCorreo({
+          gmailMessageId: datos.gmailMessageId,
+          gmailThreadId: datos.gmailThreadId,
+          clienteId: cot?.clienteId ?? null,
+          clienteEmail: datos.clienteEmail,
+          clienteNombre: clasificacion.clienteNombre,
+          remitente: datos.remitente,
+          asunto: datos.asunto,
+          resumen: datos.resumen,
+          categoria: clasificacion.categoria,
+          cotizacionId: cot?.cotizacionId ?? null,
+          respuestaIA: texto,
+          respondido: true,
+          recibidoAt: datos.recibidoAt,
         })
 
         respondidos++

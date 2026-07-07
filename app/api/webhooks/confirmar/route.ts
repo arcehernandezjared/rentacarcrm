@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server'
-import pool from '@/lib/mysql'
-import type { RowDataPacket } from 'mysql2'
+import { confirmarUltimaCotizacion, cancelarUltimaCotizacion } from '@/lib/reservas'
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-ingest-secret')
@@ -15,42 +14,14 @@ export async function POST(req: NextRequest) {
 
   const { clienteEmail, tipo } = body as { clienteEmail: string; tipo: 'confirmacion' | 'cancelacion' }
 
-  // Buscar la cotización más reciente con estado 'enviada' para este cliente
-  const [cots] = await pool.query<RowDataPacket[]>(
-    `SELECT c.id AS cotizacionId, c.vehiculo_id AS vehiculoId,
-            c.fecha_inicio AS fechaInicio, c.fecha_fin AS fechaFin,
-            c.total, c.dias, cl.id AS clienteId, cl.nombre AS clienteNombre,
-            v.marca, v.modelo
-     FROM cotizaciones c
-     JOIN clientes cl ON cl.id = c.cliente_id
-     JOIN vehiculos v ON v.id = c.vehiculo_id
-     WHERE cl.email = ? AND c.estado = 'enviada'
-     ORDER BY c.created_at DESC
-     LIMIT 1`,
-    [clienteEmail]
-  )
+  const cot = tipo === 'confirmacion'
+    ? await confirmarUltimaCotizacion(clienteEmail)
+    : await cancelarUltimaCotizacion(clienteEmail)
 
-  if (cots.length === 0) {
+  if (!cot) {
     return Response.json(
       { error: 'No hay cotización activa para este cliente', sinCotizacion: true },
       { status: 404 }
-    )
-  }
-
-  const cot = cots[0]
-
-  if (tipo === 'confirmacion') {
-    await pool.query("UPDATE cotizaciones SET estado = 'confirmada' WHERE id = ?", [cot.cotizacionId])
-    await pool.query('UPDATE vehiculos SET disponible = 0 WHERE id = ?', [cot.vehiculoId])
-    await pool.query("UPDATE clientes SET estado = 'reservado' WHERE id = ?", [cot.clienteId])
-  } else {
-    await pool.query("UPDATE cotizaciones SET estado = 'cancelada' WHERE id = ?", [cot.cotizacionId])
-    await pool.query('UPDATE vehiculos SET disponible = 1 WHERE id = ?', [cot.vehiculoId])
-    await pool.query("UPDATE clientes SET estado = 'contactado' WHERE id = ?", [cot.clienteId])
-    // Cancelar seguimientos pendientes de esa cotización
-    await pool.query(
-      "UPDATE seguimientos SET estado = 'cancelado' WHERE cotizacion_id = ? AND estado = 'pendiente'",
-      [cot.cotizacionId]
     )
   }
 

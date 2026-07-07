@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { getConfig, setAutoResponder } from '@/lib/api'
 import type { CategoriaCorreo, CategoriaConfig } from '@/lib/types'
-import { ShoppingCart, LifeBuoy, Receipt, FileText } from 'lucide-react'
+import { ShoppingCart, LifeBuoy, Receipt, FileText, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const CATEGORIAS: { key: CategoriaCorreo; label: string; desc: string; icon: React.ElementType; color: string }[] = [
@@ -10,6 +10,8 @@ const CATEGORIAS: { key: CategoriaCorreo; label: string; desc: string; icon: Rea
   { key: 'soporte', label: 'Soporte', desc: 'Dudas o problemas con una reserva activa', icon: LifeBuoy, color: 'bg-blue-500' },
   { key: 'cobro', label: 'Cobro', desc: 'Pagos, facturas y depósitos de garantía', icon: Receipt, color: 'bg-red-500' },
   { key: 'cotizacion', label: 'Cotización', desc: 'Solicitud de precio para fechas específicas — genera PDF y se envía', icon: FileText, color: 'bg-orange-500' },
+  { key: 'confirmacion', label: 'Confirmación', desc: 'El cliente acepta una cotización — reserva el vehículo automáticamente', icon: CheckCircle2, color: 'bg-emerald-600' },
+  { key: 'cancelacion', label: 'Cancelación', desc: 'El cliente cancela una cotización o reserva activa', icon: XCircle, color: 'bg-gray-500' },
 ]
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
