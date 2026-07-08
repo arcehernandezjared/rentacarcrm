@@ -1,5 +1,6 @@
 import type {
   Vehiculo, Cliente, Cotizacion, Correo, Seguimiento, EmailStats, CategoriaConfig, CategoriaCorreo,
+  Pago, CobroResumen, ResumenNegocio,
 } from './types'
 
 async function api(path: string, options?: RequestInit) {
@@ -84,6 +85,18 @@ export async function setAutoResponder(categoria: CategoriaCorreo, autoResponder
   })
 }
 
+export async function getInfoNegocio(): Promise<{ infoNegocio: string }> {
+  return api('/api/config/negocio')
+}
+
+export async function setInfoNegocio(infoNegocio: string) {
+  return api('/api/config/negocio', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ infoNegocio }),
+  })
+}
+
 // ─── Sincronización de Gmail ──────────────────────────────────────────────────
 
 export interface GmailStatus {
@@ -109,4 +122,39 @@ export interface SyncResultado {
 
 export async function sincronizarGmail(): Promise<SyncResultado> {
   return api('/api/gmail/sync', { method: 'POST' })
+}
+
+// ─── Devoluciones ────────────────────────────────────────────────────────────
+
+export interface RegistrarDevolucionInput {
+  cotizacionId: number
+  fechaDevolucion: string
+  kilometraje?: number | null
+  combustible?: string | null
+  danos?: string | null
+  cargoDanos?: number
+}
+
+export async function registrarDevolucion(data: RegistrarDevolucionInput) {
+  return api('/api/devoluciones', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+}
+
+// ─── Cobros ──────────────────────────────────────────────────────────────────
+
+export async function getCobros(): Promise<CobroResumen[]> {
+  return api('/api/cobros')
+}
+
+export async function getPagos(cotizacionId: number): Promise<Pago[]> {
+  return api(`/api/cobros/${cotizacionId}/pagos`)
+}
+
+export async function registrarPago(data: { cotizacionId: number; monto: number; metodo: string; fecha: string; notas?: string }) {
+  return api('/api/cobros', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+}
+
+// ─── Reportes ────────────────────────────────────────────────────────────────
+
+export async function getReportes(): Promise<ResumenNegocio> {
+  return api('/api/reportes')
 }

@@ -105,6 +105,48 @@ INSERT INTO configuracion_categorias (categoria, auto_responder) VALUES
   ('venta', 1), ('soporte', 1), ('cobro', 1), ('cotizacion', 1), ('confirmacion', 1), ('cancelacion', 1)
 ON DUPLICATE KEY UPDATE categoria = categoria;
 
+-- Información libre del negocio (requisitos, pagos, seguro, horarios,
+-- políticas, etc.) que la IA usa como contexto para responder cualquier
+-- consulta del cliente con datos reales, sin inventar. Fila única (id = 1).
+CREATE TABLE IF NOT EXISTS configuracion_negocio (
+  id INT PRIMARY KEY DEFAULT 1,
+  info_negocio TEXT,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO configuracion_negocio (id, info_negocio) VALUES (1, '')
+ON DUPLICATE KEY UPDATE id = id;
+
+-- Devolución de un vehículo al cerrar una reserva confirmada. Una cotización
+-- confirmada se considera "devuelta" cuando tiene una fila aquí.
+CREATE TABLE IF NOT EXISTS devoluciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cotizacion_id INT NOT NULL UNIQUE,
+  fecha_devolucion DATETIME NOT NULL,
+  kilometraje INT,
+  combustible ENUM('lleno', '3/4', '1/2', '1/4', 'vacio'),
+  danos TEXT,
+  cargo_atraso DECIMAL(10,2) NOT NULL DEFAULT 0,
+  cargo_danos DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_cargos_extra DECIMAL(10,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE
+);
+
+-- Pagos registrados manualmente contra una cotización/reserva. El estado de
+-- cobro (pendiente/parcial/pagado) se calcula sumando estos montos vs. el total.
+CREATE TABLE IF NOT EXISTS pagos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cotizacion_id INT NOT NULL,
+  monto DECIMAL(10,2) NOT NULL,
+  metodo ENUM('efectivo', 'tarjeta', 'sinpe', 'transferencia') NOT NULL DEFAULT 'efectivo',
+  fecha DATE NOT NULL,
+  notas VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE,
+  INDEX idx_cotizacion (cotizacion_id)
+);
+
 -- Conexión OAuth2 de Gmail usada por la sincronización dentro del dashboard
 -- (independiente de n8n). Una sola fila: la cuenta de Gmail del negocio.
 CREATE TABLE IF NOT EXISTS gmail_conexion (

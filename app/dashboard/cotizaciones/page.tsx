@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { getCotizaciones } from '@/lib/api'
+import { getCotizaciones, registrarDevolucion } from '@/lib/api'
 import type { Cotizacion, EstadoCotizacion } from '@/lib/types'
-import { FileDown, Car } from 'lucide-react'
+import { FileDown, Car, Undo2, X } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import toast from 'react-hot-toast'
@@ -25,9 +25,93 @@ const ESTADO_LABELS: Record<EstadoCotizacion, string> = {
 }
 const fmt = (n: number) => `₡${Number(n).toLocaleString('es-CR', { maximumFractionDigits: 0 })}`
 
+function DevolucionModal({ cotizacion, onClose, onSaved }: { cotizacion: Cotizacion; onClose: () => void; onSaved: () => void }) {
+  const [fechaDevolucion, setFechaDevolucion] = useState(new Date().toISOString().slice(0, 16))
+  const [kilometraje, setKilometraje] = useState('')
+  const [combustible, setCombustible] = useState('lleno')
+  const [danos, setDanos] = useState('')
+  const [cargoDanos, setCargoDanos] = useState('0')
+  const [saving, setSaving] = useState(false)
+
+  const handleSubmit = async () => {
+    setSaving(true)
+    try {
+      await registrarDevolucion({
+        cotizacionId: cotizacion.id,
+        fechaDevolucion,
+        kilometraje: kilometraje ? Number(kilometraje) : null,
+        combustible,
+        danos: danos || null,
+        cargoDanos: Number(cargoDanos) || 0,
+      })
+      toast.success('Devolución registrada, vehículo liberado')
+      onSaved()
+      onClose()
+    } catch (err: any) {
+      toast.error(err.message ?? 'No se pudo registrar la devolución')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50" onClick={onClose}>
+      <div className="bg-white w-full sm:rounded-2xl sm:max-w-md shadow-2xl rounded-t-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div>
+            <p className="font-semibold text-gray-900">Registrar devolución</p>
+            <p className="text-xs text-gray-400">{cotizacion.vehiculoMarca} {cotizacion.vehiculoModelo} · {cotizacion.clienteNombre}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Fecha y hora de devolución</label>
+            <input type="datetime-local" value={fechaDevolucion} onChange={e => setFechaDevolucion(e.target.value)} className="input-field" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Kilometraje</label>
+              <input type="number" value={kilometraje} onChange={e => setKilometraje(e.target.value)} className="input-field" placeholder="Opcional" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Combustible</label>
+              <select value={combustible} onChange={e => setCombustible(e.target.value)} className="input-field">
+                <option value="lleno">Lleno</option>
+                <option value="3/4">3/4</option>
+                <option value="1/2">1/2</option>
+                <option value="1/4">1/4</option>
+                <option value="vacio">Vacío</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Daños / observaciones</label>
+            <textarea value={danos} onChange={e => setDanos(e.target.value)} className="input-field" rows={2} placeholder="Opcional" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Cargo por daños (₡)</label>
+            <input type="number" value={cargoDanos} onChange={e => setCargoDanos(e.target.value)} className="input-field" />
+          </div>
+          <p className="text-xs text-gray-400">
+            Si la devolución es posterior a {format(new Date(cotizacion.fechaFin), 'dd MMM yyyy', { locale: es })}, se cobrará automáticamente un día extra por cada día de atraso a la tarifa aplicada.
+          </p>
+        </div>
+        <div className="p-5 pt-0 flex justify-end gap-2">
+          <button onClick={onClose} className="btn-secondary text-sm">Cancelar</button>
+          <button onClick={handleSubmit} disabled={saving} className="btn-primary text-sm disabled:opacity-50">
+            {saving ? 'Guardando...' : 'Confirmar devolución'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function CotizacionesPage() {
   const [items, setItems] = useState<Cotizacion[]>([])
   const [loading, setLoading] = useState(true)
+  const [devolviendo, setDevolviendo] = useState<Cotizacion | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -65,8 +149,8 @@ export default function CotizacionesPage() {
                       <p className="font-medium text-gray-900 truncate">{q.clienteNombre}</p>
                       <p className="text-xs text-gray-400 truncate">{q.clienteEmail}</p>
                     </div>
-                    <span className={`badge flex-shrink-0 ${ESTADO_COLORS[q.estado] ?? 'bg-gray-100 text-gray-500'}`}>
-                      {ESTADO_LABELS[q.estado] ?? q.estado}
+                    <span className={`badge flex-shrink-0 ${q.devuelta ? 'bg-gray-100 text-gray-500' : ESTADO_COLORS[q.estado] ?? 'bg-gray-100 text-gray-500'}`}>
+                      {q.devuelta ? 'Devuelta' : ESTADO_LABELS[q.estado] ?? q.estado}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
@@ -77,16 +161,26 @@ export default function CotizacionesPage() {
                     {format(new Date(q.fechaInicio), 'dd MMM', { locale: es })} – {format(new Date(q.fechaFin), 'dd MMM yyyy', { locale: es })}
                     <span className="text-gray-400"> · {q.dias} días</span>
                   </p>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <p className="text-base font-bold text-gray-900">{fmt(q.total)}</p>
-                    <a
-                      href={`/api/cotizaciones/${q.id}/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-600 border border-gray-200 rounded-lg px-2.5 py-1.5"
-                    >
-                      <FileDown className="w-3.5 h-3.5" /> Ver PDF
-                    </a>
+                    <div className="flex items-center gap-2">
+                      {q.estado === 'confirmada' && !q.devuelta && (
+                        <button
+                          onClick={() => setDevolviendo(q)}
+                          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-600 border border-gray-200 rounded-lg px-2.5 py-1.5"
+                        >
+                          <Undo2 className="w-3.5 h-3.5" /> Devolver
+                        </button>
+                      )}
+                      <a
+                        href={`/api/cotizaciones/${q.id}/pdf`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-600 border border-gray-200 rounded-lg px-2.5 py-1.5"
+                      >
+                        <FileDown className="w-3.5 h-3.5" /> Ver PDF
+                      </a>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -121,14 +215,21 @@ export default function CotizacionesPage() {
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-gray-800 whitespace-nowrap">{fmt(q.total)}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`badge ${ESTADO_COLORS[q.estado] ?? 'bg-gray-100 text-gray-500'}`}>
-                          {ESTADO_LABELS[q.estado] ?? q.estado}
+                        <span className={`badge ${q.devuelta ? 'bg-gray-100 text-gray-500' : ESTADO_COLORS[q.estado] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {q.devuelta ? 'Devuelta' : ESTADO_LABELS[q.estado] ?? q.estado}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <a href={`/api/cotizaciones/${q.id}/pdf`} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-orange-600" title="Ver PDF">
-                          <FileDown className="w-4 h-4" />
-                        </a>
+                        <div className="flex items-center justify-end gap-3">
+                          {q.estado === 'confirmada' && !q.devuelta && (
+                            <button onClick={() => setDevolviendo(q)} className="text-gray-400 hover:text-orange-600" title="Marcar devuelto">
+                              <Undo2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          <a href={`/api/cotizaciones/${q.id}/pdf`} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-orange-600" title="Ver PDF">
+                            <FileDown className="w-4 h-4" />
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -138,6 +239,10 @@ export default function CotizacionesPage() {
           </>
         )}
       </div>
+
+      {devolviendo && (
+        <DevolucionModal cotizacion={devolviendo} onClose={() => setDevolviendo(null)} onSaved={load} />
+      )}
     </div>
   )
 }

@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Car, LayoutDashboard, Users, FileText, BellRing, Settings, LogOut, Menu, X } from 'lucide-react'
+import { Car, LayoutDashboard, Users, FileText, BellRing, Settings, LogOut, Menu, X, CreditCard, BarChart3 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 const LINKS = [
@@ -10,6 +10,8 @@ const LINKS = [
   { href: '/dashboard/vehiculos', label: 'Vehículos', icon: Car },
   { href: '/dashboard/clientes', label: 'Clientes', icon: Users },
   { href: '/dashboard/cotizaciones', label: 'Cotizaciones', icon: FileText },
+  { href: '/dashboard/cobros', label: 'Cobros', icon: CreditCard },
+  { href: '/dashboard/reportes', label: 'Reportes', icon: BarChart3 },
   { href: '/dashboard/seguimientos', label: 'Seguimientos', icon: BellRing },
   { href: '/dashboard/configuracion', label: 'Configuración', icon: Settings },
 ]

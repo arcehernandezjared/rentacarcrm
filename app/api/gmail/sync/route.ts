@@ -4,9 +4,10 @@ import {
 } from '@/lib/gmail'
 import { clasificarCorreo, redactarRespuesta, redactarRespuestaCotizacion, redactarRespuestaDisponibilidad, redactarRespuestaReserva } from '@/lib/claude'
 import { obtenerConfigCategorias } from '@/lib/config'
+import { obtenerInfoNegocio } from '@/lib/configNegocio'
 import { generarCotizacion, SinVehiculosDisponiblesError } from '@/lib/cotizaciones'
 import { listarVehiculosDisponibles } from '@/lib/vehiculos'
-import { confirmarUltimaCotizacion, cancelarUltimaCotizacion } from '@/lib/reservas'
+import { confirmarUltimaCotizacion, confirmarCotizacion, cancelarUltimaCotizacion } from '@/lib/reservas'
 import { registrarCorreo } from '@/lib/correos'
 import { programarSeguimiento } from '@/lib/seguimientos'
 
@@ -21,6 +22,7 @@ export async function POST() {
   }
 
   const config = await obtenerConfigCategorias()
+  const infoNegocio = await obtenerInfoNegocio()
   const mensajes = await listUnreadMessages(client, LOTE_MAXIMO)
 
   let respondidos = 0
@@ -143,6 +145,64 @@ export async function POST() {
         })
 
         respondidos++
+      } else if (clasificacion.categoria === 'confirmacion' && clasificacion.fechaInicio && clasificacion.fechaFin) {
+        // El propio correo de confirmación trae vehículo/fechas explícitos:
+        // se reserva directo en vez de adivinar a qué cotización anterior se refiere.
+        const nueva = await generarCotizacion({
+          clienteNombre: clasificacion.clienteNombre,
+          clienteEmail: datos.clienteEmail,
+          categoriaVehiculo: clasificacion.categoriaVehiculo,
+          fechaInicio: clasificacion.fechaInicio,
+          fechaFin: clasificacion.fechaFin,
+          origen: datos.remitente,
+        })
+
+        const cot = await confirmarCotizacion({
+          cotizacionId: nueva.cotizacionId,
+          vehiculoId: nueva.vehiculo.id,
+          clienteId: nueva.clienteId,
+          clienteNombre: clasificacion.clienteNombre,
+          marca: nueva.vehiculo.marca,
+          modelo: nueva.vehiculo.modelo,
+          fechaInicio: nueva.fechaInicio,
+          fechaFin: nueva.fechaFin,
+          dias: nueva.dias,
+          total: nueva.total,
+        })
+
+        const texto = await redactarRespuestaReserva({
+          clienteNombre: cot.clienteNombre,
+          tipo: 'confirmada',
+          vehiculoMarca: cot.marca,
+          vehiculoModelo: cot.modelo,
+          fechaInicio: cot.fechaInicio,
+          fechaFin: cot.fechaFin,
+        })
+
+        await sendReply(client, {
+          threadId: datos.gmailThreadId,
+          messageIdHeader: datos.messageIdHeader,
+          to: datos.clienteEmail,
+          subject: datos.asunto,
+          body: texto,
+          attachment: { filename: `cotizacion-${cot.cotizacionId}.pdf`, content: nueva.pdfBuffer, mimeType: 'application/pdf' },
+        })
+
+        await registrarCorreo({
+          gmailMessageId: datos.gmailMessageId,
+          gmailThreadId: datos.gmailThreadId,
+          clienteId: cot.clienteId,
+          remitente: datos.remitente,
+          asunto: datos.asunto,
+          resumen: datos.resumen,
+          categoria: 'confirmacion',
+          cotizacionId: cot.cotizacionId,
+          respuestaIA: texto,
+          respondido: true,
+          recibidoAt: datos.recibidoAt,
+        })
+
+        respondidos++
       } else if (clasificacion.categoria === 'confirmacion' || clasificacion.categoria === 'cancelacion') {
         const tipo = clasificacion.categoria === 'confirmacion' ? 'confirmada' : 'cancelada'
         const cot = clasificacion.categoria === 'confirmacion'
@@ -163,6 +223,7 @@ export async function POST() {
               remitente: datos.remitente,
               asunto: datos.asunto,
               resumen: `El cliente quiere ${tipo === 'confirmada' ? 'confirmar' : 'cancelar'} una reserva, pero no encontramos ninguna cotización activa a su nombre. Pídele amablemente que aclare a qué cotización se refiere o que solicite una nueva.`,
+              infoNegocio,
             })
 
         await sendReply(client, {
@@ -196,6 +257,7 @@ export async function POST() {
           remitente: datos.remitente,
           asunto: datos.asunto,
           resumen: datos.resumen,
+          infoNegocio,
         })
 
         await sendReply(client, {

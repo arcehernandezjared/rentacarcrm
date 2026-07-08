@@ -4,6 +4,8 @@ export type EstadoCliente = 'nuevo' | 'contactado' | 'cotizado' | 'reservado' | 
 export type EstadoCotizacion = 'enviada' | 'aceptada' | 'rechazada' | 'vencida' | 'confirmada' | 'cancelada'
 export type CategoriaCorreo = 'venta' | 'soporte' | 'cobro' | 'cotizacion' | 'confirmacion' | 'cancelacion'
 export type EstadoSeguimiento = 'pendiente' | 'enviado' | 'cancelado'
+export type MetodoPago = 'efectivo' | 'tarjeta' | 'sinpe' | 'transferencia'
+export type NivelCombustible = 'lleno' | '3/4' | '1/2' | '1/4' | 'vacio'
 
 export interface Vehiculo {
   id: number
@@ -53,6 +55,56 @@ export interface Cotizacion {
   clienteEmail?: string
   vehiculoMarca?: string
   vehiculoModelo?: string
+  devuelta?: boolean
+  totalPagado?: number
+}
+
+export interface Devolucion {
+  id: number
+  cotizacionId: number
+  fechaDevolucion: string
+  kilometraje: number | null
+  combustible: NivelCombustible | null
+  danos: string | null
+  cargoAtraso: number
+  cargoDanos: number
+  totalCargosExtra: number
+  createdAt: string
+}
+
+export interface Pago {
+  id: number
+  cotizacionId: number
+  monto: number
+  metodo: MetodoPago
+  fecha: string
+  notas: string | null
+  createdAt: string
+}
+
+export interface CobroResumen {
+  cotizacionId: number
+  clienteNombre: string
+  clienteEmail: string
+  vehiculoMarca: string
+  vehiculoModelo: string
+  fechaInicio: string
+  fechaFin: string
+  total: number
+  totalPagado: number
+  saldo: number
+  estado: EstadoCotizacion
+  devuelta: boolean
+}
+
+export interface ResumenNegocio {
+  ingresosPorMes: { mes: string; total: number }[]
+  totalCotizado: number
+  confirmadas: number
+  canceladas: number
+  totalCotizaciones: number
+  tasaConversion: number
+  vehiculosTop: { marca: string; modelo: string; reservas: number }[]
 }
 
 export interface Correo {

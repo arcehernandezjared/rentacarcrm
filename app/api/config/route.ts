@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import pool from '@/lib/mysql'
 import { obtenerConfigCategorias } from '@/lib/config'
 
-const CATEGORIAS = ['venta', 'soporte', 'cobro', 'cotizacion']
+const CATEGORIAS = ['venta', 'soporte', 'cobro', 'cotizacion', 'confirmacion', 'cancelacion']
 
 export const dynamic = 'force-dynamic'
 

@@ -92,7 +92,7 @@ export async function generarCotizacion(input: GenerarCotizacionInput) {
   return {
     clienteId,
     cotizacionId,
-    vehiculo: { marca: vehiculo.marca, modelo: vehiculo.modelo, anio: vehiculo.anio, categoria: vehiculo.categoria },
+    vehiculo: { id: vehiculo.id, marca: vehiculo.marca, modelo: vehiculo.modelo, anio: vehiculo.anio, categoria: vehiculo.categoria },
     fechaInicio: input.fechaInicio,
     fechaFin: input.fechaFin,
     dias,

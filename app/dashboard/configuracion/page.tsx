@@ -1,9 +1,20 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { getConfig, setAutoResponder } from '@/lib/api'
+import { getConfig, setAutoResponder, getInfoNegocio, setInfoNegocio } from '@/lib/api'
 import type { CategoriaCorreo, CategoriaConfig } from '@/lib/types'
 import { ShoppingCart, LifeBuoy, Receipt, FileText, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+const PLACEHOLDER_INFO_NEGOCIO = `Ejemplos de lo que puedes escribir aquí (bórralo y pon la info real de tu negocio):
+- Requisitos para rentar: mayor de 21 años, licencia vigente con al menos 2 años, tarjeta de crédito a nombre del conductor.
+- Métodos de pago aceptados: efectivo, tarjeta, Sinpe Móvil, transferencia.
+- Depósito de garantía: ₡150,000, se libera 5 días hábiles después de la devolución sin daños.
+- Seguro: incluido con deducible de ₡200,000 por daño; seguro premium sin deducible disponible por ₡8,000/día.
+- Kilometraje: sin límite.
+- Combustible: se entrega y se devuelve con el tanque lleno.
+- Horario de oficina: lunes a sábado, 7am a 6pm. Entregas fuera de horario tienen cargo extra.
+- Ubicación: [dirección de tu oficina / aeropuerto].
+- Política de cancelación: sin costo hasta 48 horas antes del inicio de la renta.`
 
 const CATEGORIAS: { key: CategoriaCorreo; label: string; desc: string; icon: React.ElementType; color: string }[] = [
   { key: 'venta', label: 'Venta', desc: 'Consultas generales de interés en alquilar, sin pedir cotización formal', icon: ShoppingCart, color: 'bg-emerald-500' },
@@ -28,9 +39,19 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function ConfiguracionPage() {
   const [config, setConfig] = useState<CategoriaConfig | null>(null)
+  const [infoNegocio, setInfoNegocioState] = useState('')
+  const [infoNegocioGuardada, setInfoNegocioGuardada] = useState('')
+  const [savingInfo, setSavingInfo] = useState(false)
 
   const load = useCallback(async () => {
     try { setConfig(await getConfig()) } catch (err: any) { toast.error(err.message ?? 'No se pudo cargar la configuración') }
+    try {
+      const { infoNegocio } = await getInfoNegocio()
+      setInfoNegocioState(infoNegocio)
+      setInfoNegocioGuardada(infoNegocio)
+    } catch (err: any) {
+      toast.error(err.message ?? 'No se pudo cargar la información del negocio')
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -43,6 +64,19 @@ export default function ConfiguracionPage() {
     } catch (err: any) {
       toast.error(err.message ?? 'No se pudo guardar')
       setConfig(prev => prev ? { ...prev, [categoria]: !value } : prev)
+    }
+  }
+
+  const handleGuardarInfoNegocio = async () => {
+    setSavingInfo(true)
+    try {
+      await setInfoNegocio(infoNegocio)
+      setInfoNegocioGuardada(infoNegocio)
+      toast.success('Información del negocio actualizada')
+    } catch (err: any) {
+      toast.error(err.message ?? 'No se pudo guardar')
+    } finally {
+      setSavingInfo(false)
     }
   }
 
@@ -76,6 +110,33 @@ export default function ConfiguracionPage() {
             </div>
           )
         })}
+      </div>
+
+      <div className="card p-4 sm:p-5 space-y-3">
+        <div>
+          <p className="font-medium text-gray-900">Información del negocio</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            La IA usa este texto para responder con datos reales cualquier pregunta del cliente
+            (requisitos, pagos, seguro, horarios, políticas, etc.). Si no encuentra la respuesta aquí,
+            no inventa: le dice al cliente que un agente le dará seguimiento.
+          </p>
+        </div>
+        <textarea
+          value={infoNegocio}
+          onChange={e => setInfoNegocioState(e.target.value)}
+          rows={12}
+          placeholder={PLACEHOLDER_INFO_NEGOCIO}
+          className="input-field font-mono text-xs leading-relaxed"
+        />
+        <div className="flex justify-end">
+          <button
+            onClick={handleGuardarInfoNegocio}
+            disabled={savingInfo || infoNegocio === infoNegocioGuardada}
+            className="btn-primary text-sm disabled:opacity-50"
+          >
+            {savingInfo ? 'Guardando...' : 'Guardar información'}
+          </button>
+        </div>
       </div>
     </div>
   )

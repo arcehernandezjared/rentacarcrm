@@ -42,7 +42,7 @@ export async function clasificarCorreo(input: {
 }): Promise<ClasificacionCorreo> {
   const hoy = new Date()
 
-  const system = `Eres un asistente que analiza correos entrantes de un negocio de renta de carros (Rent a Car). Clasifica el correo en EXACTAMENTE una de estas categorías: venta, soporte, cobro, cotizacion, confirmacion, cancelacion. Usa 'cotizacion' cuando el cliente pregunte por precio, tarifa, disponibilidad de vehículos o quiera rentar un carro, sin importar si dio fechas concretas o no. Usa 'confirmacion' cuando el cliente acepta expresamente una cotización que ya recibió y quiere proceder con la reserva (ej: "sí, resérvenmelo", "de acuerdo, confirmo"). Usa 'cancelacion' cuando el cliente cancela o rechaza una cotización o reserva previa. Si la categoría es 'cotizacion', además extrae: categoriaVehiculo (uno de: economico, sedan, suv, pickup, van, lujo, el que mejor calce con lo que pide el cliente; usa null si no menciona ningún tipo de vehículo en particular), y fechaInicio/fechaFin en formato YYYY-MM-DD ÚNICAMENTE si el correo las indica explícitamente (usa null en caso contrario, NUNCA inventes ni asumas fechas). Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni backticks, con este formato exacto: {"categoria":"venta|soporte|cobro|cotizacion|confirmacion|cancelacion","categoriaVehiculo":"..."|null,"fechaInicio":"YYYY-MM-DD"|null,"fechaFin":"YYYY-MM-DD"|null,"clienteNombre":"..."}`
+  const system = `Eres un asistente que analiza correos entrantes de un negocio de renta de carros (Rent a Car). Clasifica el correo en EXACTAMENTE una de estas categorías: venta, soporte, cobro, cotizacion, confirmacion, cancelacion. Usa 'cotizacion' cuando el cliente pregunte por precio, tarifa, disponibilidad de vehículos o quiera rentar un carro, sin importar si dio fechas concretas o no. Usa 'confirmacion' cuando el cliente acepta expresamente proceder con una reserva (ej: "sí, resérvenmelo", "de acuerdo, confirmo"), ya sea aceptando una cotización previa o indicando directamente en este mismo correo el vehículo y las fechas que quiere reservar. Usa 'cancelacion' cuando el cliente cancela o rechaza una cotización o reserva previa. Si la categoría es 'cotizacion' o 'confirmacion', además extrae, ÚNICAMENTE a partir de lo que dice ESTE correo (no asumas nada de correos anteriores): categoriaVehiculo (uno de: economico, sedan, suv, pickup, van, lujo, el que mejor calce con el vehículo o tipo que menciona; usa null si no menciona ningún vehículo o tipo en particular), y fechaInicio/fechaFin en formato YYYY-MM-DD ÚNICAMENTE si este correo las indica explícitamente (usa null en caso contrario, NUNCA inventes ni asumas fechas). Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni backticks, con este formato exacto: {"categoria":"venta|soporte|cobro|cotizacion|confirmacion|cancelacion","categoriaVehiculo":"..."|null,"fechaInicio":"YYYY-MM-DD"|null,"fechaFin":"YYYY-MM-DD"|null,"clienteNombre":"..."}`
 
   const userContent = `Remitente: ${input.remitente}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\nFecha de hoy: ${hoy.toISOString().slice(0, 10)}`
 
@@ -63,11 +63,17 @@ export async function clasificarCorreo(input: {
   }
 }
 
-export async function redactarRespuesta(input: { categoria: string; remitente: string; asunto: string; resumen: string }) {
-  const system = `Eres un asistente de un negocio de renta de carros (Rent a Car) que responde correos de clientes en español. Adapta el tono según la categoría: venta (cordial, ofrece ayudar a coordinar el alquiler y pregunta fechas si faltan), soporte (empático y claro, sin prometer soluciones que no puedes garantizar por correo), cobro (formal y conciso, nunca pidas ni confirmes datos completos de tarjeta). Responde ÚNICAMENTE con el cuerpo del correo de respuesta, sin asunto ni firma.`
-  const userContent = `Categoría: ${input.categoria}\nRemitente: ${input.remitente}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\n\nRedacta la respuesta.`
+export async function redactarRespuesta(input: {
+  categoria: string; remitente: string; asunto: string; resumen: string; infoNegocio?: string
+}) {
+  const system = `Eres un asistente de un negocio de renta de carros (Rent a Car) que responde correos de clientes en español. Adapta el tono según la categoría: venta (cordial, ofrece ayudar a coordinar el alquiler y pregunta fechas si faltan), soporte (empático y claro, sin prometer soluciones que no puedes garantizar por correo), cobro (formal y conciso, nunca pidas ni confirmes datos completos de tarjeta).
+
+Se te da abajo información real del negocio (requisitos, métodos de pago, seguro, horarios, políticas, etc.). Úsala para responder con precisión cualquier pregunta del cliente sobre el negocio, sin importar de qué se trate. Si la pregunta no tiene relación con el negocio de renta de carros, o no encuentras la respuesta en la información dada ni en el propio correo del cliente, NUNCA inventes ni asumas datos: responde de forma breve y cordial indicando que un miembro del equipo revisará su consulta y le dará seguimiento personalmente.
+
+Responde ÚNICAMENTE con el cuerpo del correo de respuesta, sin asunto ni firma.`
+  const userContent = `Información del negocio:\n${input.infoNegocio?.trim() || '(sin información adicional registrada)'}\n\nCategoría: ${input.categoria}\nRemitente: ${input.remitente}\nAsunto: ${input.asunto}\nContenido: ${input.resumen}\n\nRedacta la respuesta.`
   const texto = await llamarClaude(system, userContent, 350)
-  return texto || 'Gracias por tu correo, en breve te contactamos con más detalles.'
+  return texto || 'Gracias por tu correo. Un miembro de nuestro equipo revisará tu consulta y te dará seguimiento a la brevedad.'
 }
 
 export async function redactarRespuestaDisponibilidad(input: {
